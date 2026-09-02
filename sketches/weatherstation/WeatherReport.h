@@ -93,12 +93,8 @@ class WeatherReport {
       mPacket.mWindSpeedMpS = windSpeedMpS;
     }
 
-    bool hasWindDirection() {
-      return *mPacket.mWindDirection!='\0';
-    }
-
-    void setWindDirection(const char *windDirection) {
-      strcpy(mPacket.mWindDirection, windDirection);
+    void setWindDirectionDegrees(float windDirectionDegrees) {
+      mPacket.mWindDirectionDegrees = windDirectionDegrees;
     }
 
     void send() {

@@ -24,7 +24,7 @@ class WeatherPacket {
     float mHumidityPercent; // %
 
     //  wind vane
-    char mWindDirection [4]; // three digits plus \0
+    float mWindDirectionDegrees; // 0..359.9, compass degrees
 
     //  anemometer
     float mWindSpeedMpS;
@@ -36,7 +36,7 @@ class WeatherPacket {
       mPressureHPA = UNDEFINEDVALUE;
       mHumidityPercent = UNDEFINEDVALUE;
 
-      mWindDirection[0] = '\0';
+      mWindDirectionDegrees = UNDEFINEDVALUE;
       mWindSpeedMpS = UNDEFINEDVALUE;
     }
 
@@ -65,10 +65,11 @@ class WeatherPacket {
 			}
 #endif // USE_TEMPERATURE
 
-#if USE_WIND_REED||USE_WIND_AS5600
-			if (mWindDirection[0]) {
+#if USE_WIND_AS5600
+			if (mWindDirectionDegrees!=UNDEFINEDVALUE) {
 					p->print("wind direction: ");
-					p->println(mWindDirection);
+					p->print(mWindDirectionDegrees, 1);
+					p->println(" degree");
 			}
 
 			if (mWindSpeedMpS!=UNDEFINEDVALUE) {
@@ -76,12 +77,9 @@ class WeatherPacket {
 				p->print(mWindSpeedMpS, 1);
 				p->println(" m/s");
 			}
-#endif
+#endif // USE_WIND_AS5600
     }
 
-#define STRING_WORKAROUND 1
-
-#if STRING_WORKAROUND
 		const char *jsonLine(const char *name, bool valid, float value, int precision, bool closingComma = true) {
 			static char buffer[128];
 
@@ -92,55 +90,17 @@ class WeatherPacket {
 
 			return buffer;
 		}
-#endif
 
     String toJson(String linePrefix = "") {
 
       String json = linePrefix + "{\n";
 
-#if STRING_WORKAROUND
 			json += linePrefix + jsonLine("raindelta", mDeltaRainMM!=UNDEFINEDVALUE, mDeltaRainMM, 1);
 			json += linePrefix + jsonLine("temperature", mTemperatureDegreeCelsius!=UNDEFINEDVALUE, mTemperatureDegreeCelsius, 1);
 			json += linePrefix + jsonLine("humidity", mHumidityPercent!=UNDEFINEDVALUE, mHumidityPercent, 1);
 			json += linePrefix + jsonLine("pressure", mPressureHPA!=UNDEFINEDVALUE, mPressureHPA, 1);
-
-      if (mWindDirection[0])
-        json += linePrefix + "\t\"winddirection\" : \"" + String(mWindDirection) +"\",\n";
-      else
-        json += linePrefix + "\t\"winddirection\" : \"" STRINGNOTINITIALIZED "\",\n";
-
+			json += linePrefix + jsonLine("winddirection", mWindDirectionDegrees!=UNDEFINEDVALUE, mWindDirectionDegrees, 1);
 			json += linePrefix + jsonLine("windspeed", mWindSpeedMpS!=UNDEFINEDVALUE, mWindSpeedMpS, 1, false);
-#else
-      if (mDeltaRainMM!=UNDEFINEDVALUE)
-        json += linePrefix + "\t\"raindelta\" : " + String(mDeltaRainMM, 1) +",\n";
-      else
-        json += linePrefix + "\t\"raindelta\" : \"" STRINGNOTINITIALIZED "\",\n";
-
-      if (mTemperatureDegreeCelsius!=UNDEFINEDVALUE)
-        json += linePrefix + "\t\"temperature\" : " + String(mTemperatureDegreeCelsius, 1) +",\n";
-      else
-        json += linePrefix + "\t\"temperature\" : \"" STRINGNOTINITIALIZED "\",\n";
-
-      if (mHumidityPercent!=UNDEFINEDVALUE)
-        json += linePrefix + "\t\"humidity\" : " + String(mHumidityPercent, 1) +",\n";
-      else
-        json += linePrefix + "\t\"humidity\" : \"" STRINGNOTINITIALIZED "\",\n";
-
-      if (mPressureHPA!=UNDEFINEDVALUE)
-        json += linePrefix + "\t\"pressure\" : " + String(mPressureHPA, 1) +",\n";
-      else
-        json += linePrefix + "\t\"pressure\" : \"" STRINGNOTINITIALIZED "\",\n";
-
-      if (mWindDirection[0])
-        json += linePrefix + "\t\"winddirection\" : \"" + String(mWindDirection) +"\",\n";
-      else
-        json += linePrefix + "\t\"winddirection\" : \"" STRINGNOTINITIALIZED "\",\n";
-
-      if (mWindSpeedMpS!=UNDEFINEDVALUE)
-        json += linePrefix + "\t\"windspeed\" : " + String(mWindSpeedMpS, 1) +"\n";
-      else
-        json += linePrefix + "\t\"windspeed\" : \"" STRINGNOTINITIALIZED "\"\n";
-#endif
 
       json += linePrefix + "}";
 

@@ -40,10 +40,9 @@ static void startSerial() {
   sensor handling functions
 
   overview:
-    - the wind vane uses 8 reed contacts, its state is polled once per report interval; the 8 contacts
-      are available multiplexed by three bits
-    - the anemometer uses a single reed contact, pulses are counted continuously by an interrupt and
-      speed is derived once per report interval
+    - wind direction and wind speed are each read from their own AS5600 magnetic encoder via its
+      PWM OUT pin (no I2C); direction is polled once per report interval, speed is sampled
+      continuously in the background and averaged once per report interval
     - the rain gauge uses a single reed contact, a pulse is notified by a GPIO interrupt, a counter
       is increased, and the result is sent once per report interval
     - temperature, barometric pressure, humidity are measure using a Bosch BME280, its state is polled
@@ -53,60 +52,28 @@ static void startSerial() {
 
  ****************************************************************************************************/
 
-//  wind vane / direction
 #if USE_WIND_AS5600
-static void propagateWindDirection(WeatherReport &report) {
 
-#if DEBUG
-  static bool reported = false;
-  if (!reported) {
-    startSerial();
-    Serial.println("retrieving wind vane data...");
-    reported = true;
-  }
-#endif // DEBUG
+//  reads the AS5600's PWM duty cycle on the given pin and converts it to a raw angle (0..4095);
+//  returns false if no valid PWM signal was detected (e.g. sensor not connected)
+static bool readAS5600PwmAngle(int pin, int *rawAngle) {
+  unsigned long highMicros = pulseIn(pin, HIGH, AS5600_PWM_PULSE_TIMEOUT_US);
+  unsigned long lowMicros = pulseIn(pin, LOW, AS5600_PWM_PULSE_TIMEOUT_US);
 
-  int rawValue = analogRead(WIND_VANE_PIN);
+  if (highMicros==0||lowMicros==0)
+    return false; // timed out, no signal
 
-  //  while the AS5600 allows read outs in degrees using the I2C or
-  //  PWM interfaces, we use the analog plus A2D interface. It is
-  //  the default set for the chip and allows us to use the bigger
-  //  soldering points; the mapping is good enough to derive one of
-  //  the 16 directions
+  float dutyPercent = 100.0f*highMicros/(highMicros+lowMicros);
+  if (dutyPercent<AS5600_PWM_MIN_DUTY_PERCENT)
+    dutyPercent = AS5600_PWM_MIN_DUTY_PERCENT;
+  if (dutyPercent>AS5600_PWM_MAX_DUTY_PERCENT)
+    dutyPercent = AS5600_PWM_MAX_DUTY_PERCENT;
 
-  //  map 22.5 degree segments starting with "N" to raw values
-  //  this mapping works around the non-linearity of A2D conversion
-  //  in addition, it minimized the "blind" spot between 4095 / 0
-  //  the best way possible
-  static int raw4direction[] =
-    {
-      4095, 0, 197, 460, 704, 951, 1223, 1484,
-      1743, 1936, 2186, 2410, 2732, 3020, 3363, 3744
-    };
-
-  //  find best match according to raw value
-  int best_i = 0;
-  int best_diff = 4096;
-  for (int i = 0; i<16; i++) {
-    int diff = 2048 - abs(abs(raw4direction[i]-rawValue)%4096 - 2048);
-    if (diff<best_diff) {
-      best_diff = diff;
-      best_i = i;
-    }
-  }
-
-  //  set result
-  static const char *directions[] =
-    {
-      "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-      "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"
-    };
-
-  report.setWindDirection(directions[best_i]);
+  *rawAngle = (int) ((dutyPercent-AS5600_PWM_MIN_DUTY_PERCENT)/(AS5600_PWM_MAX_DUTY_PERCENT-AS5600_PWM_MIN_DUTY_PERCENT)*4095.0f+0.5f);
+  return true;
 }
-#endif // USE_WIND_AS5600
 
-#if USE_WIND_REED
+//  wind vane / direction
 static void propagateWindDirection(WeatherReport &report) {
 
 #if DEBUG
@@ -118,84 +85,22 @@ static void propagateWindDirection(WeatherReport &report) {
   }
 #endif // DEBUG
 
-  static struct {
-    const char *windDirection;
-    uint8_t pattern[2];
-  } windDirectionPattern [] = {
-    //  single bit, two bit, three and four bit pattern
-    //  to cope with different reed and magnet characteristics
-    { "N",    { 0b00000001, 0b10000011 } },
-    { "NNE",  { 0b00000011, 0b10000111 } },
-    { "NE",   { 0b00000010, 0b00000111 } },
-    { "ENE",  { 0b00000110, 0b00001111 } },
-    { "E",    { 0b00000100, 0b00001110 } },
-    { "ESE",  { 0b00001100, 0b00011110 } },
-    { "SE",   { 0b00001000, 0b00011100 } },
-    { "SSE",  { 0b00011000, 0b00111100 } },
-    { "S",    { 0b00010000, 0b00111000 } },
-    { "SSW",  { 0b00110000, 0b01111000 } },
-    { "SW",   { 0b00100000, 0b01110000 } },
-    { "WSW",  { 0b01100000, 0b11110000 } },
-    { "W",    { 0b01000000, 0b11100000 } },
-    { "WNW",  { 0b11000000, 0b11100001 } },
-    { "NW",   { 0b10000000, 0b11000001 } },
-    { "NNW",  { 0b10000001, 0b11000011 } }
-  };
-
-  //  collect states
-  const char *result = NULL;
-  uint8_t directions = 0;
-
+  int rawAngle;
+  if (readAS5600PwmAngle(WIND_VANE_PIN, &rawAngle))
+    report.setWindDirectionDegrees(rawAngle*360.0f/4096.0f);
 #if DEBUG
-  Serial.print("active directions: ");
-#endif // DEBUG
-
-  for (int i = 0; i<8; i++) {
-    //  select one of 8 vane contacts
-    digitalWrite(WIND_VANE_S0, i&0b00000001?HIGH:LOW);
-    digitalWrite(WIND_VANE_S1, i&0b00000010?HIGH:LOW);
-    digitalWrite(WIND_VANE_S2, i&0b00000100?HIGH:LOW);
-    delay(10); // this fixes issues with wrong digitalRead() results below
-
-    //  read and store in directions
-    if (digitalRead(WIND_VANE_Z)) {
-      directions = directions|(0b1<<i);
-#if DEBUG
-      Serial.print(windDirectionPattern[i*2].windDirection);
-      Serial.print(" ");
-#endif
-    }
-  }
-
-  //  Check for all pin pattern...
-  for (int i=0; i<16; i++) {
-    for (int j=0; j<2; j++) {
-      uint8_t pattern = windDirectionPattern[i].pattern[j];
-      if (directions==pattern)
-        result = windDirectionPattern[i].windDirection;
-    }
-  }
-
-#if DEBUG
-  Serial.print("-> ");
-  Serial.println(result);
-#endif
-
-  if (result)
-    report.setWindDirection(result);
   else {
-    static bool reported = false;
-    if (!reported) {
+    static bool notFoundReported = false;
+    if (!notFoundReported) {
       startSerial();
-      if (!directions)
-        Serial.println("no main wind vane found");
-      else
-        Serial.println("invalid vane pattern found");
-      reported = true;
+      Serial.println("no wind direction PWM signal found...");
+      notFoundReported = true;
     }
   }
+#endif // DEBUG
 }
-#endif // USE_WIND_REED
+
+#endif // USE_WIND_AS5600
 
 #if USE_RAIN
 const double gaugeDiameter = 106; // mm
@@ -300,26 +205,51 @@ static void propagateTemperatureEtAll(WeatherReport &report) {
 #endif // USE_TEMPERATURE
 
 static unsigned long startSampling; // initialized  in setup()
-static int windSpeedCounts = 0;
-static void handleWindSpeed() {
-  windSpeedCounts++;
-#if DEBUG
-  Serial.print("increased wind speed count to ");
-  Serial.println(windSpeedCounts);
-#endif // DEBUG
-}
 
-#if USE_WIND_REED||USE_WIND_AS5600
+#if USE_WIND_AS5600
+
+//  wind speed is derived from the AS5600's continuously accumulated rotation rather than a
+//  pulse count, since the PWM angle read gives an absolute position instead of a per-turn pulse;
+//  call this frequently from loop() (not just once per report) so full rotations aren't missed
+static float windSpeedAccumulatedDegrees = 0;
+static int lastWindSpeedRawAngle = -1; // -1 = not sampled yet
+static unsigned long lastWindSpeedSampleMillis = 0;
+#define WINDSPEED_SAMPLE_INTERVAL_MS 75
+
+static void sampleWindSpeedAS5600() {
+  unsigned long now = millis();
+  if (now-lastWindSpeedSampleMillis<WINDSPEED_SAMPLE_INTERVAL_MS)
+    return;
+  lastWindSpeedSampleMillis = now;
+
+  int rawAngle;
+  if (!readAS5600PwmAngle(WINDSPEED_PIN, &rawAngle))
+    return; // no signal this sample, skip
+
+  if (lastWindSpeedRawAngle>=0) {
+    int delta = rawAngle-lastWindSpeedRawAngle;
+    //  handle wraparound at the 0/4095 boundary, taking the shorter path
+    if (delta>2048)
+      delta -= 4096;
+    else if (delta<-2048)
+      delta += 4096;
+
+    windSpeedAccumulatedDegrees += abs(delta)*360.0f/4096.0f;
+  }
+
+  lastWindSpeedRawAngle = rawAngle;
+}
 
 static void propagateWindSpeed(WeatherReport &report) {
   unsigned long speedSampleTime = millis();
   float secondsPassed = (speedSampleTime-startSampling)/1000.0f;
 
   if (secondsPassed>=1.0f) {
-    //  at least one second sampled, derive wind speed
+    //  at least one second sampled, derive wind speed from accumulated rotations
 
     //  derive wind speed measured from number of rotations: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5948875/
-    float windSpeedMpS = DEFAULT_WINDSPEED_FACTOR*windSpeedCounts/NUM_COUNTS_PER_TURN/secondsPassed;
+    float rotationsPerSecond = (windSpeedAccumulatedDegrees/360.0f)/secondsPassed;
+    float windSpeedMpS = DEFAULT_WINDSPEED_FACTOR*rotationsPerSecond;
 
     Serial.print("wind speed measured at ");
     Serial.print(DEFAULT_MEASUREMENT_HEIGHT, 1);
@@ -327,7 +257,7 @@ static void propagateWindSpeed(WeatherReport &report) {
     Serial.print(windSpeedMpS, 1);
     Serial.println(" m/s");
 
-    windSpeedCounts = 0; // reset
+    windSpeedAccumulatedDegrees = 0; // reset
 
     //  measurements made on a height (reference) different to height 10m need a compensation:
     //    v(h) = vref/ln(href/z0)*ln(h/z0)
@@ -349,7 +279,7 @@ static void propagateWindSpeed(WeatherReport &report) {
     report.setWindSpeed(0);
 }
 
-#endif // USE_WIND_REED||USE_WIND_AS5600
+#endif // USE_WIND_AS5600
 
 /****************************************************************************************************
   main functions
@@ -373,19 +303,11 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(RAIN_PIN), handleRainState, RISING);
 #endif // USE_RAIN
 
-  //  setup wind vane
- #if USE_WIND_REED
-  pinMode(WIND_VANE_S0, OUTPUT);
-  pinMode(WIND_VANE_S1, OUTPUT);
-  pinMode(WIND_VANE_S2, OUTPUT);
-  pinMode(WIND_VANE_Z, INPUT_PULLDOWN);
-#endif // USE_WIND_REED
-
-#if USE_WIND_REED||USE_WIND_AS5600
-  //  setup anemometer
-  pinMode(WINDSPEED_PIN, INPUT_PULLDOWN);
-  attachInterrupt(digitalPinToInterrupt(WINDSPEED_PIN), handleWindSpeed, RISING);
-#endif // USE_WIND_REED||USE_WIND_AS5600
+#if USE_WIND_AS5600
+  //  setup wind vane and anemometer PWM input pins (AS5600 OUT pins)
+  pinMode(WIND_VANE_PIN, INPUT);
+  pinMode(WINDSPEED_PIN, INPUT);
+#endif // USE_WIND_AS5600
 
 #if DEBUG
   Serial.println("finished setup, continuing to loop()");
@@ -397,15 +319,20 @@ void setup() {
 
 void loop() {
 
+#if USE_WIND_AS5600
+  //  keep integrating wind speed rotation continuously, not just once per report
+  sampleWindSpeedAS5600();
+#endif // USE_WIND_AS5600
+
   //  sample all sensors and send a report once per DEFAULT_SECONDS_BETWEEN_REPORTS interval;
-  //  running continuously (no deep sleep) means the wind speed interrupt counts pulses across
-  //  the whole interval rather than just a brief post-wakeup window
+  //  running continuously (no deep sleep) means wind speed is integrated across the whole
+  //  interval rather than just a brief post-wakeup window
   if (millis()-startSampling>DEFAULT_SECONDS_BETWEEN_REPORTS*MS2S_FACTOR) {
 
-#if USE_WIND_AS5600||USE_WIND_REED
+#if USE_WIND_AS5600
     propagateWindSpeed(report);
     propagateWindDirection(report);
-#endif // USE_WIND_AS5600||USE_WIND_REED
+#endif // USE_WIND_AS5600
 
 #if USE_TEMPERATURE
     propagateTemperatureEtAll(report);
