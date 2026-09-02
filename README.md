@@ -1,5 +1,7 @@
 # WeatherStationOne
 
+<!-- test: verifying CODEOWNERS review assignment -->
+
 This is part of the Weather Station One project, a complete and modular weather station. The design of the system has been driven by a number of requirements:
 
 - collect all common weather channels including temperature, humidity, barometric pressure, rain, wind speed and direction, illumination / sun hours, ground humidity
