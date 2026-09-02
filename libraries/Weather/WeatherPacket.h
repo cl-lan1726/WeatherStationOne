@@ -1,20 +1,17 @@
 //
-//  binary packet of weather data
+//  weather data, serialized to JSON for MQTT publishing
 //
 
 #ifndef _WEATHERPACKET_H_
 #define _WEATHERPACKET_H_
 
-#include <Packet.h>
+#include <Arduino.h>
+#include <WeatherConfig.h>
 
+#define UNDEFINEDVALUE -1.0
 #define STRINGNOTINITIALIZED "-"
 
-class WeatherPacket : public Packet {
-
-  private:
-
-    //  header
-    byte mMagicByte;
+class WeatherPacket {
 
   public:
 
@@ -32,14 +29,7 @@ class WeatherPacket : public Packet {
     //  anemometer
     float mWindSpeedMpS;
 
-  private:
-
-    //  CRC16 checksum
-    uint16_t  mCRC16;
-
-  public:
-
-    WeatherPacket() : Packet() {
+    WeatherPacket() {
       mDeltaRainMM = UNDEFINEDVALUE;
 
       mTemperatureDegreeCelsius = UNDEFINEDVALUE;
@@ -51,10 +41,6 @@ class WeatherPacket : public Packet {
     }
 
     void print(Print *p) {
-    	p->print("magic byte: ");
-			p->print(mMagicByte);
-			p->println(mMagicByte==MAGICBYTE?" correct":" wrong");
-
 #if USE_RAIN
 			if (mDeltaRainMM!=UNDEFINEDVALUE) {
       	p->print("rain: ");
@@ -91,10 +77,6 @@ class WeatherPacket : public Packet {
 				p->println(" m/s");
 			}
 #endif
-
-			p->print("checksum: ");
-			p->print(mCRC16);
-			p->println(mCRC16==crc16()?" correct":" wrong");
     }
 
 #define STRING_WORKAROUND 1
@@ -112,7 +94,7 @@ class WeatherPacket : public Packet {
 		}
 #endif
 
-    String json(String linePrefix = "") {
+    String toJson(String linePrefix = "") {
 
       String json = linePrefix + "{\n";
 
@@ -163,16 +145,6 @@ class WeatherPacket : public Packet {
       json += linePrefix + "}";
 
       return json;
-    }
-
-  protected:
-
-    byte *magicByteAddr() {
-      return &mMagicByte;
-    }
-
-    uint16_t *crc16Addr() {
-      return &mCRC16;
     }
 };
 
