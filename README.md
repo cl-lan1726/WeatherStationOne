@@ -71,3 +71,5 @@ Once `weatherbase` is powered, connect your browser to `http://weatherbasedebug.
 - add multi-language support for web interface
 
 
+
+<!-- test PR comment: this line will be removed, just verifying the PR workflow -->
