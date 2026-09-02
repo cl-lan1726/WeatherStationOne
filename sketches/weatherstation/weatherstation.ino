@@ -15,16 +15,9 @@
   rain gauge
  ****************************************************************************************************/
 
-RTC_DATA_ATTR unsigned int numRainBuckets = 0;
-RTC_DATA_ATTR bool rainBucketOperational = true; // bucket is *not* horizontal permanently
-RTC_DATA_ATTR unsigned int lastNumRainBucketsReported = 0;
-
-/****************************************************************************************************
-  deep sleep wakeup status
- ****************************************************************************************************/
-
-RTC_DATA_ATTR int lastWakeupLevel = 0;
-RTC_DATA_ATTR int wakeupsSinceLastReport = 0;
+static volatile unsigned int numRainBuckets = 0;
+static volatile bool rainBucketOperational = true; // bucket is *not* horizontal permanently
+static unsigned int lastNumRainBucketsReported = 0;
 
 /****************************************************************************************************
   utility functions
@@ -42,276 +35,162 @@ static void startSerial() {
   }
 }
 
-#if !TESTING
-//  safe way to goto deep sleep
-static void deepSleep() {
-
-#if USE_WIND_REED||USE_WIND_AS5600
-  //  make sure we do not get interupts after deep sleep
-  detachInterrupt(digitalPinToInterrupt(WINDSPEED_PIN));
-#endif
-
-  //  turn LED off
-  digitalWrite(LED_PIN, LOW);
-
-#if USE_RAIN
-  //  set up all rain pin triggered wake up - make sure we register for any change
-  //  this works around a station lock down in case the rain gauge short cuts (always HIGH)
-  lastWakeupLevel = digitalRead(RAIN_PIN)?0:1;
-
-#if DEBUG
-  Serial.print("enabling ext0 wake up for RAIN_PIN going to state ");
-  Serial.println(lastWakeupLevel);
-#endif // DEBUG
-
-  esp_sleep_enable_ext0_wakeup ((gpio_num_t) RAIN_PIN, lastWakeupLevel); // wake up on every change
-
-#endif // USE_RAIN
-
-  //  station reports data on timer wakeups only; set a wakeup time relative to
-  //  last reporting time...
-  unsigned long secondsToNextReport = DEFAULT_SECONDS_BETWEEN_REPORTS;
-
-  //  reduce wait time by ext0 wake ups to compensate report slow down
-#define SECONDS_PER_EXT0_WAKEUP 1
-#define MINIMAL_WAIT_SECONDS 2
-  if (secondsToNextReport>wakeupsSinceLastReport*SECONDS_PER_EXT0_WAKEUP+MINIMAL_WAIT_SECONDS)
-    secondsToNextReport = secondsToNextReport-wakeupsSinceLastReport*SECONDS_PER_EXT0_WAKEUP;
-  else
-    secondsToNextReport = MINIMAL_WAIT_SECONDS;
-  
-#if DEBUG
-  Serial.print("enabling timer wake up in ");
-  Serial.print(secondsToNextReport);
-  Serial.println(" s");
-  if (wakeupsSinceLastReport>0) {
-    Serial.print("with time reduced by ");
-    Serial.print(wakeupsSinceLastReport*SECONDS_PER_EXT0_WAKEUP);
-    Serial.println(" seconds due to rain wake ups");
-  }
-#endif // DEBUG
-
-  esp_sleep_enable_timer_wakeup (secondsToNextReport*uS2S_FACTOR);
-  
-  Serial.println("going to deep sleep...");
-
-#if DEBUG
-  if (serialStarted) {
-    Serial.flush();
-    delay(1000); // make sure flush is completed before power down
-  }
-#endif // DEBUG
-  
-  //  sent ESP32 to deep sleep
-  esp_deep_sleep_start();  
-}
-
-//  function that prints the reason by which ESP32 has been awaken from sleep
-static void printWakeupReason() {
-  startSerial();
-  
-  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-
-  switch(wakeup_reason) {
-    case ESP_SLEEP_WAKEUP_EXT0:
-      Serial.println("----------- wakeup caused by external signal using RTC_IO -----------"); 
-      break;
-    case ESP_SLEEP_WAKEUP_EXT1:
-      Serial.println("---------- wakeup caused by external signal using RTC_CNTL ----------"); 
-      break;
-    case ESP_SLEEP_WAKEUP_TIMER: 
-      Serial.println("---------------------- wakeup caused by timer -----------------------"); 
-      break;
-    case ESP_SLEEP_WAKEUP_TOUCHPAD:
-      Serial.println("--------------------- wakeup caused by touchpad ---------------------"); 
-      break;
-    case ESP_SLEEP_WAKEUP_ULP:
-      Serial.println("-------------------- wakeup caused by ULP program -------------------"); 
-      break;
-    default: 
-      Serial.printf("-------------- wakeup was not caused by deep sleep: %d ---------------\n",wakeup_reason); 
-      break;
-  }
-}
-
-#endif // !TESTING
-
 /****************************************************************************************************
   sensor handling functions
 
   overview:
-    - the wind vane uses 8 reed contacts, its state is polled when a report is due; the 8 contacts
-      are available multiplexed by three bits 
-    - the anemometer uses a single reed contact, speed is sampled when a report is due
-    - the rain gauge uses a single reed contact, a change is notified by an ext0 wakeup, a counter
-      is increased, and the result is sent when a report is due
+    - the wind vane uses 8 reed contacts, its state is polled once per report interval; the 8 contacts
+      are available multiplexed by three bits
+    - the anemometer uses a single reed contact, pulses are counted continuously by an interrupt and
+      speed is derived once per report interval
+    - the rain gauge uses a single reed contact, a pulse is notified by a GPIO interrupt, a counter
+      is increased, and the result is sent once per report interval
     - temperature, barometric pressure, humidity are measure using a Bosch BME280, its state is polled
-      when a report is due
+      once per report interval
     - OPEN: luminescence
     - OPEN: ground humidity (Bodenfeuchte)
-  
+
  ****************************************************************************************************/
 
 //  wind vane / direction
 #if USE_WIND_AS5600
 static void propagateWindDirection(WeatherReport &report) {
 
-  if (TESTING||!report.hasWindDirection()) {
-
 #if DEBUG
-#if TESTING
-      Serial.println("retrieving wind vane data...");
-#else
-      static bool reported = false;
-      if (!reported) {
-        startSerial();
-        Serial.println("retrieving wind vane data...");
-        reported = true;
-      }
-#endif // TESTING
+  static bool reported = false;
+  if (!reported) {
+    startSerial();
+    Serial.println("retrieving wind vane data...");
+    reported = true;
+  }
 #endif // DEBUG
 
-    int rawValue = analogRead(WIND_VANE_PIN);
+  int rawValue = analogRead(WIND_VANE_PIN);
 
-#if TESTING&&DEBUG
-    Serial.printf("raw A2D value is %d\n", rawValue);
-#endif // TESTING&&DEBUG
-    //  while the AS5600 allows read outs in degrees using the I2C or
-    //  PWM interfaces, we use the analog plus A2D interface. It is
-    //  the default set for the chip and allows us to use the bigger
-    //  soldering points; the mapping is good enough to derive one of
-    //  the 16 directions
-  
-    //  map 22.5 degree segments starting with "N" to raw values
-    //  this mapping works around the non-linearity of A2D conversion
-    //  in addition, it minimized the "blind" spot between 4095 / 0
-    //  the best way possible
-    static int raw4direction[] = 
-      {
-        4095, 0, 197, 460, 704, 951, 1223, 1484,
-        1743, 1936, 2186, 2410, 2732, 3020, 3363, 3744 
-      };
-  
-    //  find best match according to raw value
-    int best_i = 0;
-    int best_diff = 4096;
-    for (int i = 0; i<16; i++) {
-      int diff = 2048 - abs(abs(raw4direction[i]-rawValue)%4096 - 2048);
-      if (diff<best_diff) {
-        best_diff = diff;
-        best_i = i;
-      }
+  //  while the AS5600 allows read outs in degrees using the I2C or
+  //  PWM interfaces, we use the analog plus A2D interface. It is
+  //  the default set for the chip and allows us to use the bigger
+  //  soldering points; the mapping is good enough to derive one of
+  //  the 16 directions
+
+  //  map 22.5 degree segments starting with "N" to raw values
+  //  this mapping works around the non-linearity of A2D conversion
+  //  in addition, it minimized the "blind" spot between 4095 / 0
+  //  the best way possible
+  static int raw4direction[] =
+    {
+      4095, 0, 197, 460, 704, 951, 1223, 1484,
+      1743, 1936, 2186, 2410, 2732, 3020, 3363, 3744
+    };
+
+  //  find best match according to raw value
+  int best_i = 0;
+  int best_diff = 4096;
+  for (int i = 0; i<16; i++) {
+    int diff = 2048 - abs(abs(raw4direction[i]-rawValue)%4096 - 2048);
+    if (diff<best_diff) {
+      best_diff = diff;
+      best_i = i;
     }
-
-    //  set result
-    static const char *directions[] = 
-      {
-        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW" 
-      };
-
-#if TESTING&&DEBUG
-    Serial.printf("direction measured: %s\n", directions[best_i]);
-#endif // TESTING&&DEBUG
-      
-    report.setWindDirection(directions[best_i]);  
   }
+
+  //  set result
+  static const char *directions[] =
+    {
+      "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+      "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"
+    };
+
+  report.setWindDirection(directions[best_i]);
 }
 #endif // USE_WIND_AS5600
 
 #if USE_WIND_REED
 static void propagateWindDirection(WeatherReport &report) {
 
-  if (TESTING||!report.hasWindDirection()) {
-
 #if DEBUG
-#if TESTING
-      Serial.println("retrieving wind vane data...");
-#else      
-      static bool reported = false;
-      if (!reported) {
-        startSerial();
-        Serial.println("retrieving wind vane data...");
-        reported = true;
-      }
-#endif // TESTING
+  static bool reported = false;
+  if (!reported) {
+    startSerial();
+    Serial.println("retrieving wind vane data...");
+    reported = true;
+  }
 #endif // DEBUG
 
-    static struct {
-      const char *windDirection;
-      uint8_t pattern[2];
-    } windDirectionPattern [] = {
-      //  single bit, two bit, three and four bit pattern
-      //  to cope with different reed and magnet characteristics
-      { "N",    { 0b00000001, 0b10000011 } },
-      { "NNE",  { 0b00000011, 0b10000111 } },
-      { "NE",   { 0b00000010, 0b00000111 } },
-      { "ENE",  { 0b00000110, 0b00001111 } },
-      { "E",    { 0b00000100, 0b00001110 } },
-      { "ESE",  { 0b00001100, 0b00011110 } },
-      { "SE",   { 0b00001000, 0b00011100 } },
-      { "SSE",  { 0b00011000, 0b00111100 } },
-      { "S",    { 0b00010000, 0b00111000 } },
-      { "SSW",  { 0b00110000, 0b01111000 } },
-      { "SW",   { 0b00100000, 0b01110000 } },
-      { "WSW",  { 0b01100000, 0b11110000 } },
-      { "W",    { 0b01000000, 0b11100000 } },
-      { "WNW",  { 0b11000000, 0b11100001 } },
-      { "NW",   { 0b10000000, 0b11000001 } },
-      { "NNW",  { 0b10000001, 0b11000011 } }      
-    };
+  static struct {
+    const char *windDirection;
+    uint8_t pattern[2];
+  } windDirectionPattern [] = {
+    //  single bit, two bit, three and four bit pattern
+    //  to cope with different reed and magnet characteristics
+    { "N",    { 0b00000001, 0b10000011 } },
+    { "NNE",  { 0b00000011, 0b10000111 } },
+    { "NE",   { 0b00000010, 0b00000111 } },
+    { "ENE",  { 0b00000110, 0b00001111 } },
+    { "E",    { 0b00000100, 0b00001110 } },
+    { "ESE",  { 0b00001100, 0b00011110 } },
+    { "SE",   { 0b00001000, 0b00011100 } },
+    { "SSE",  { 0b00011000, 0b00111100 } },
+    { "S",    { 0b00010000, 0b00111000 } },
+    { "SSW",  { 0b00110000, 0b01111000 } },
+    { "SW",   { 0b00100000, 0b01110000 } },
+    { "WSW",  { 0b01100000, 0b11110000 } },
+    { "W",    { 0b01000000, 0b11100000 } },
+    { "WNW",  { 0b11000000, 0b11100001 } },
+    { "NW",   { 0b10000000, 0b11000001 } },
+    { "NNW",  { 0b10000001, 0b11000011 } }
+  };
 
-    //  collect states
-    const char *result = NULL;
-    uint8_t directions = 0;
+  //  collect states
+  const char *result = NULL;
+  uint8_t directions = 0;
 
 #if DEBUG
-    Serial.print("active directions: ");
+  Serial.print("active directions: ");
 #endif // DEBUG
 
-    for (int i = 0; i<8; i++) {
-      //  select one of 8 vane contacts
-      digitalWrite(WIND_VANE_S0, i&0b00000001?HIGH:LOW);    
-      digitalWrite(WIND_VANE_S1, i&0b00000010?HIGH:LOW);    
-      digitalWrite(WIND_VANE_S2, i&0b00000100?HIGH:LOW);
-      delay(10); // this fixes issues with wrong digitalRead() results below
+  for (int i = 0; i<8; i++) {
+    //  select one of 8 vane contacts
+    digitalWrite(WIND_VANE_S0, i&0b00000001?HIGH:LOW);
+    digitalWrite(WIND_VANE_S1, i&0b00000010?HIGH:LOW);
+    digitalWrite(WIND_VANE_S2, i&0b00000100?HIGH:LOW);
+    delay(10); // this fixes issues with wrong digitalRead() results below
 
-      //  read and store in directions
-      if (digitalRead(WIND_VANE_Z)) {
-        directions = directions|(0b1<<i);
+    //  read and store in directions
+    if (digitalRead(WIND_VANE_Z)) {
+      directions = directions|(0b1<<i);
 #if DEBUG
-        Serial.print(windDirectionPattern[i*2].windDirection);
-        Serial.print(" ");
-#endif    
-      }
+      Serial.print(windDirectionPattern[i*2].windDirection);
+      Serial.print(" ");
+#endif
     }
+  }
 
-    //  Check for all pin pattern...
-    for (int i=0; i<16; i++) {
-      for (int j=0; j<2; j++) {
-        uint8_t pattern = windDirectionPattern[i].pattern[j];
-        if (directions==pattern)
-          result = windDirectionPattern[i].windDirection;
-      }
+  //  Check for all pin pattern...
+  for (int i=0; i<16; i++) {
+    for (int j=0; j<2; j++) {
+      uint8_t pattern = windDirectionPattern[i].pattern[j];
+      if (directions==pattern)
+        result = windDirectionPattern[i].windDirection;
     }
-    
+  }
+
 #if DEBUG
-    Serial.print("-> ");
-    Serial.println(result);
+  Serial.print("-> ");
+  Serial.println(result);
 #endif
 
-    if (result)
-      report.setWindDirection(result);
-    else {
-      static bool reported = false;
-      if (!reported) {
-        startSerial();
-        if (!directions)
-          Serial.println("no main wind vane found");
-        else
-          Serial.println("invalid vane pattern found");          
-        reported = true;
-      }
+  if (result)
+    report.setWindDirection(result);
+  else {
+    static bool reported = false;
+    if (!reported) {
+      startSerial();
+      if (!directions)
+        Serial.println("no main wind vane found");
+      else
+        Serial.println("invalid vane pattern found");
+      reported = true;
     }
   }
 }
@@ -321,16 +200,17 @@ static void propagateWindDirection(WeatherReport &report) {
 const double gaugeDiameter = 106; // mm
 const double gaugeArea = M_PI*(gaugeDiameter/2)*(gaugeDiameter/2); // mm2
 
-static void handleRainState() {
-  //  called after ext0 wakeup, increment
-  if (rainBucketOperational) {
+#define RAIN_DEBOUNCE_MS 50
+static void IRAM_ATTR handleRainState() {
+  //  called by GPIO interrupt on rain pulse; debounce since reed contacts bounce
+  static unsigned long lastInterruptMillis = 0;
+  unsigned long now = millis();
+  if (now-lastInterruptMillis<RAIN_DEBOUNCE_MS)
+    return;
+  lastInterruptMillis = now;
+
+  if (rainBucketOperational)
     numRainBuckets++;
-#if DEBUG
-    Serial.print("increased number of rain buckets to ");
-    Serial.println(numRainBuckets);
-#endif // DEBUG
-  } else
-      Serial.println("skipped increasing number of rain buckets");    
 }
 
 static void propagateRain(WeatherReport &report) {
@@ -348,7 +228,7 @@ static void propagateRain(WeatherReport &report) {
 
   //  to calculate mm from buckets
   unsigned int numDeltaBuckets = 0;
-  
+
   if (numRainBuckets>lastNumRainBucketsReported)
     // in case a value has been reset...
     numDeltaBuckets = numRainBuckets-lastNumRainBucketsReported;
@@ -379,48 +259,40 @@ static void propagateRain(WeatherReport &report) {
 //  temperature/barometric/humidity sensor
 static void propagateTemperatureEtAll(WeatherReport &report) {
 
-  if (TESTING||!report.hasTemperature()) {  
 #if DEBUG
-#if TESTING
+  static bool reported = false;
+  if (!reported) {
+    startSerial();
     Serial.println("retrieving BME280 data...");
-#else      
-    static bool reported = false;
-    if (!reported) {
+    reported = true;
+  }
+#endif
+
+  Adafruit_BME280 bme;
+  if (!bme.begin(0x76)) {
+#if DEBUG
+    static bool notFoundReported = false;
+    if (!notFoundReported) {
       startSerial();
-      Serial.println("retrieving BME280 data...");
-      reported = true;
-    }
-#endif
-#endif
-
-    Adafruit_BME280 bme;
-    if (!bme.begin(0x76)) {
-#if TESTING
       Serial.println("no temperature sensor found...");
-#else            
-      static bool reported = false;
-      if (!reported) {
-        startSerial();
-        Serial.println("no temperature sensor found...");
-        reported = true;
-      }
-#endif
-    } else {
-      int numRetries = 10;
-
-      do {      
-        float temperature = bme.readTemperature();
-        float pressure = bme.readPressure();
-        float humidity = bme.readHumidity();
-
-        if (temperature!=NAN && pressure!=NAN && humidity!=NAN) {
-          report.addTemperature(temperature, pressure/100.0f, humidity);
-          break;      
-        }
-
-        numRetries--;
-      } while (numRetries);
+      notFoundReported = true;
     }
+#endif
+  } else {
+    int numRetries = 10;
+
+    do {
+      float temperature = bme.readTemperature();
+      float pressure = bme.readPressure();
+      float humidity = bme.readHumidity();
+
+      if (temperature!=NAN && pressure!=NAN && humidity!=NAN) {
+        report.addTemperature(temperature, pressure/100.0f, humidity);
+        break;
+      }
+
+      numRetries--;
+    } while (numRetries);
   }
 }
 
@@ -434,12 +306,12 @@ static void handleWindSpeed() {
   Serial.print("increased wind speed count to ");
   Serial.println(windSpeedCounts);
 #endif // DEBUG
-} 
+}
 
 #if USE_WIND_REED||USE_WIND_AS5600
 
 static void propagateWindSpeed(WeatherReport &report) {
-  unsigned long speedSampleTime = millis(); 
+  unsigned long speedSampleTime = millis();
   float secondsPassed = (speedSampleTime-startSampling)/1000.0f;
 
   if (secondsPassed>=1.0f) {
@@ -461,7 +333,7 @@ static void propagateWindSpeed(WeatherReport &report) {
     //  with
     //    vref = windSpeedMpS
     //    href = DEFAULT_MEASUREMENT_HEIGHT
-    //    z0 = 
+    //    z0 =
     //    h = 10.0
 
     const float z0 = 0.1; // https://www.igwindkraft.at/kinder/windkurs/windpowerweb/de/stat/unitsw.htm#roughness
@@ -479,51 +351,26 @@ static void propagateWindSpeed(WeatherReport &report) {
 #endif // USE_WIND_REED||USE_WIND_AS5600
 
 /****************************************************************************************************
-  main functions  
+  main functions
  ****************************************************************************************************/
 
 WeatherReport report;
 
 void setup() {
 
-#if !TESTING&&DEBUG
-  printWakeupReason();
-#endif // !TESTING&&DEBUG
-  
+#if DEBUG
+  startSerial();
+#endif // DEBUG
+
   //  configure signaling LEDs
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH); // high until deep sleep
+  digitalWrite(LED_PIN, HIGH);
 
 #if USE_RAIN
-  //  configure rain PIN
-  pinMode(RAIN_PIN, INPUT);
-  delay(10); // make sure digitalRead() is ready
+  //  configure rain pin and attach a real interrupt (always-on, no more deep sleep wakeup)
+  pinMode(RAIN_PIN, INPUT_PULLDOWN);
+  attachInterrupt(digitalPinToInterrupt(RAIN_PIN), handleRainState, RISING);
 #endif // USE_RAIN
-
-#if !TESTING
-  //  handle wakup cause
-  switch(esp_sleep_get_wakeup_cause()) {
-    case ESP_SLEEP_WAKEUP_EXT0:
-      //  wakeup has been set either for state 1 or 0
-      //  increase count only in case we are in 1
-#if USE_RAIN
-      if (lastWakeupLevel) 
-        handleRainState();
-#endif
-      wakeupsSinceLastReport++;
-      //  goto deep sleep instantly
-      deepSleep();
-      break;
-    case ESP_SLEEP_WAKEUP_TIMER:
-      //  proceed to loop() for data collection and reporting
-      wakeupsSinceLastReport = 0;
-      break;
-    default:
-      //  all other wake ups, goto deep sleep again
-      deepSleep();
-      break;
-  }
-#endif // !TESTING
 
   //  setup wind vane
  #if USE_WIND_REED
@@ -540,19 +387,20 @@ void setup() {
 #endif // USE_WIND_REED||USE_WIND_AS5600
 
 #if DEBUG
-  startSerial();  
   Serial.println("finished setup, continuing to loop()");
 #endif // DEBUG
-  
-  //  set starting millis for sampling-loop
+
+  //  set starting millis for the current report accumulation window
   startSampling = millis();
 }
 
 void loop() {
 
-  //  check whether the time passed since start exceeds sampling time
-  if (millis()-startSampling>SECONDS_SAMPLING*MS2S_FACTOR) {
-    //  sensors propagating once
+  //  sample all sensors and send a report once per DEFAULT_SECONDS_BETWEEN_REPORTS interval;
+  //  running continuously (no deep sleep) means the wind speed interrupt counts pulses across
+  //  the whole interval rather than just a brief post-wakeup window
+  if (millis()-startSampling>DEFAULT_SECONDS_BETWEEN_REPORTS*MS2S_FACTOR) {
+
 #if USE_WIND_AS5600||USE_WIND_REED
     propagateWindSpeed(report);
     propagateWindDirection(report);
@@ -566,22 +414,14 @@ void loop() {
     propagateRain(report);
 #endif // USE_RAIN
 
-#if TESTING
-    digitalWrite(LED_PIN, LOW); //  turn LED off
-
-    delay(5000); // wait a bit for next cycle
-    
-    //  set starting millis for sampling-loop
-    startSampling = millis();
-#else
     //  send report...
     report.send();
 
     digitalWrite(LED_PIN, LOW); //  turn LED off
 
-    //  ...and goto sleep afterwards
-    deepSleep();
-#endif // TESTING
+    //  start a fresh report accumulation window (also resets low-pass filtered values)
+    report = WeatherReport();
+    startSampling = millis();
   }
 
   delay(100);

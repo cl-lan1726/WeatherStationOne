@@ -2,7 +2,6 @@
   development settings
  ****************************************************************************************************/
 #define DEBUG 1 // customize, more text output
-#define TESTING 0 // customize, enable continuous testing vs. deep sleep cycle
 
 //	make implementation decisions
 #define USE_WIND_REED 0 // customize, enable code for anemometer and wind vane using reeds/HC4051 muxer
@@ -15,7 +14,6 @@
  ****************************************************************************************************/
 
 #define DEFAULT_SECONDS_BETWEEN_REPORTS 20 // default reporting interval
-#define SECONDS_SAMPLING 3
 
 #define NUM_DIRECTIONS_PER_PIN 4
 
@@ -72,4 +70,3 @@
 
 //  other constants
 #define MS2S_FACTOR 1000ul // conversion factor for milli seconds to seconds
-#define uS2S_FACTOR ((uint64_t)1000000ul) // conversion factor for micro seconds to seconds
