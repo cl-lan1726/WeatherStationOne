@@ -9,32 +9,7 @@
 #include <Adafruit_BME280.h>
 
 //  project
-#include <CalibrationPacket.h>
 #include "WeatherReport.h"
-
-#if USE_TRACKER
-/****************************************************************************************************
-  solar tracker
- ****************************************************************************************************/
-
-# include "Tracker.h"
-
-RTC_DATA_ATTR bool initializeTrackerMembers = true;
-RTC_DATA_ATTR Tracker tracker(initializeTrackerMembers);
-
-#endif // USE_TRACKER
-
-/****************************************************************************************************
-  calibration stuff
- ****************************************************************************************************/
-
-//  tricky: while RTC_DATA_ATTR variables should be initialized once and keep state for wake ups
-//  after deep sleep, the compiler is calling the constructor every time - including wake ups;
-//  to keep RTC state from former run, initializeCalibrationPacketMembers is passed in to allow disabling
-//  of member initialization; called with true during startup, it will be false for wake ups from deep
-//  sleep (see CalibrationPacket())
-RTC_DATA_ATTR bool initializeCalibrationPacketMembers = true;
-RTC_DATA_ATTR CalibrationPacket calibrationPacket(initializeCalibrationPacketMembers);
 
 /****************************************************************************************************
   rain gauge
@@ -76,16 +51,8 @@ static void deepSleep() {
   detachInterrupt(digitalPinToInterrupt(WINDSPEED_PIN));
 #endif
 
-#if USE_TRACKER
-  //  detach stepper
-  tracker.deepSleep();
-#endif // USE_TRACKER
-
   //  turn LED off
   digitalWrite(LED_PIN, LOW);
-
-  //  send HC12 to power saving mode
-  HC12.end();
 
 #if USE_RAIN
   //  set up all rain pin triggered wake up - make sure we register for any change
@@ -103,7 +70,7 @@ static void deepSleep() {
 
   //  station reports data on timer wakeups only; set a wakeup time relative to
   //  last reporting time...
-  unsigned long secondsToNextReport = calibrationPacket.mSecondsBetweenReports;
+  unsigned long secondsToNextReport = DEFAULT_SECONDS_BETWEEN_REPORTS;
 
   //  reduce wait time by ext0 wake ups to compensate report slow down
 #define SECONDS_PER_EXT0_WAKEUP 1
@@ -386,7 +353,7 @@ static void propagateRain(WeatherReport &report) {
     // in case a value has been reset...
     numDeltaBuckets = numRainBuckets-lastNumRainBucketsReported;
 
-  double deltaRainMM = numDeltaBuckets*calibrationPacket.mBucketTriggerVolume/gaugeArea;
+  double deltaRainMM = numDeltaBuckets*DEFAULT_BUCKET_TRIGGER_VOLUME/gaugeArea;
 
 #if DEBUG
   if (numDeltaBuckets>0) {
@@ -459,71 +426,6 @@ static void propagateTemperatureEtAll(WeatherReport &report) {
 
 #endif // USE_TEMPERATURE
 
-#if USE_BATTERY
-
-static void propagateBatteryVoltage(WeatherReport &report) {
-
-  int adcValue = analogRead(VOLTAGE_DIVIDOR_PIN);
-
-  //  implement a calibration value focussed linear correction...
-  //
-  //  voltage dividor is made up like
-  //    GND -> resistorMeasurement -> VOLTAGE_DIVIDOR_PIN -> resistorAdder -> voltage
-  //  calibration:
-  //    set TESTING to 1
-  //    measure voltage between GND and VOLTAGE_DIVIDOR_PIN using a multimeter
-  //    read out ADC value
-  //    meaure precise resistor values resistorMeasurement and resistorAdder
-  //    customize resistorMeasurement, resistorAdder, voltageDividorMeasured, and voltageDividorMeasuredADCValue
-
-#if TESTING
-  Serial.print("ADC value for calibration: ");
-  Serial.println(adcValue);
-#endif // TESTING
-
-  float voltageDividorMeasured = 2.45; // customize
-  int voltageDividorMeasuredADCValue = 2870; // customize, must not be 4095
-
-  //  do a linear interpolation towards known end points zero and 3.3V
-  float voltage = voltageDividorMeasured;
-  
-  if (adcValue>voltageDividorMeasuredADCValue)
-    //  interpolate between voltageDividorMeasured and 3.3V / 4095 (ADC)
-    //  sample: 3482... voltage = 2.45+(3.3-2.45)*(3482-2870)/(4095-2870) = 2.45+0.85*612/1225 = 2.45+0.425 = 2.875V
-    voltage = voltageDividorMeasured+(3.3-voltageDividorMeasured)*(adcValue-voltageDividorMeasuredADCValue)/(4095-voltageDividorMeasuredADCValue);
-  else if (adcValue<voltageDividorMeasuredADCValue)
-    //  interpolate between voltageDividorMeasured and 0V / 0 (ADC)
-    //  sample: 1435... voltage = 1435/2870*2.45 = 1.225V
-    voltage = (float)adcValue/voltageDividorMeasuredADCValue*voltageDividorMeasured;
-
-  //  make sure we are not getting off realistic results
-  if (voltage<0.0)
-    voltage = 0.0;
-  if (voltage>3.3)
-    voltage = 3.3;
-
-#if TESTING
-  Serial.print("ADC voltage: ");
-  Serial.print(voltage,3);
-  Serial.println(" V");
-#endif // TESTING
-  
-  //  we have a voltage devidor made up from two 10k resistors
-  const float resistorMeasurement = 9.82;  // customize
-  const float resistorAdder = 9.77; // customize
-  voltage = voltage*(resistorMeasurement+resistorAdder)/resistorMeasurement;
-
-#if TESTING
-  Serial.print("battery voltage: ");
-  Serial.print(voltage,3);
-  Serial.println(" V");
-#endif // TESTING
-
-  report.addVoltage(voltage);
-}
-
-#endif // USE_BATTERY
-
 static unsigned long startSampling; // initialized  in setup()
 static int windSpeedCounts = 0;
 static void handleWindSpeed() {
@@ -544,10 +446,10 @@ static void propagateWindSpeed(WeatherReport &report) {
     //  at least one second sampled, derive wind speed
 
     //  derive wind speed measured from number of rotations: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5948875/
-    float windSpeedMpS = calibrationPacket.mWindSpeedFactor*windSpeedCounts/NUM_COUNTS_PER_TURN/secondsPassed;
+    float windSpeedMpS = DEFAULT_WINDSPEED_FACTOR*windSpeedCounts/NUM_COUNTS_PER_TURN/secondsPassed;
 
     Serial.print("wind speed measured at ");
-    Serial.print(calibrationPacket.mMeasurementHeight, 1);
+    Serial.print(DEFAULT_MEASUREMENT_HEIGHT, 1);
     Serial.print(" m: ");
     Serial.print(windSpeedMpS, 1);
     Serial.println(" m/s");
@@ -558,12 +460,12 @@ static void propagateWindSpeed(WeatherReport &report) {
     //    v(h) = vref/ln(href/z0)*ln(h/z0)
     //  with
     //    vref = windSpeedMpS
-    //    href = calibrationPacket.mMeasurementHeight
+    //    href = DEFAULT_MEASUREMENT_HEIGHT
     //    z0 = 
     //    h = 10.0
 
     const float z0 = 0.1; // https://www.igwindkraft.at/kinder/windkurs/windpowerweb/de/stat/unitsw.htm#roughness
-    windSpeedMpS = windSpeedMpS/log(calibrationPacket.mMeasurementHeight/z0)*log(10.0/z0);
+    windSpeedMpS = windSpeedMpS/log(DEFAULT_MEASUREMENT_HEIGHT/z0)*log(10.0/z0);
 
     Serial.print("wind speed at 10 meter height: ");
     Serial.print(windSpeedMpS, 1);
@@ -621,10 +523,6 @@ void setup() {
       deepSleep();
       break;
   }
-
-  //  going to loop(), we will send reports... bring up HC-12
-  //  communication early
-  HC12.begin();
 #endif // !TESTING
 
   //  setup wind vane
@@ -648,12 +546,6 @@ void setup() {
   
   //  set starting millis for sampling-loop
   startSampling = millis();
-
-#if USE_TRACKER
-  //  maintain tracker status
-  if (tracker.canBeControlled())
-    tracker.moveTo(calibrationPacket.mAzimuth);
-#endif // USE_TRACKER
 }
 
 void loop() {
@@ -686,54 +578,11 @@ void loop() {
     report.send();
 
     digitalWrite(LED_PIN, LOW); //  turn LED off
-    
-    //  ...wait for a calibration update...
-    unsigned long waitStartedMillis = millis();
-    CalibrationPacket newCalibrationPacket;
-    while (millis()-waitStartedMillis<2000) {
-      if (HC12.available()) {
-        digitalWrite(LED_PIN, HIGH); // high when sound data is received
-        if (newCalibrationPacket.decodeByte(HC12.read())) {
-            calibrationPacket = newCalibrationPacket; // sound packet
-            calibrationPacket.print(&Serial);
-            
-            //  Check if we have received a command...
-            if (calibrationPacket.mCommand != CalibrationPacket::Command::NoCommand) {
-              switch (calibrationPacket.mCommand) {
-#if USE_TRACKER
-                case CalibrationPacket::Command::CalibrateSolarTracker:
-                  tracker.calibrate();
-                  while (!tracker.canBeControlled())
-                    tracker.run();
-                  break;
-                case CalibrationPacket::Command::TestSolarTracker:
-                  tracker.minMaxTesting();
-                  while (!tracker.canBeControlled())
-                    tracker.run();
-                  break;          
-#endif // USE_TRACKER        
-              }
-            }
-            
-            digitalWrite(LED_PIN, LOW); // ready
-            break;
-        }
-      }
-    }
-    
-    //  ...and goto sleep afterwards 
+
+    //  ...and goto sleep afterwards
     deepSleep();
 #endif // TESTING
   }
 
-#if USE_TRACKER
-  //  run tracker if position has changed
-  tracker.run();
-#endif // USE_TRACKER
-
-  //  sensors collecting data for a longer time
-#if USE_BATTERY
-  propagateBatteryVoltage(report);
-#endif // USE_BATTERY
   delay(100);
 }

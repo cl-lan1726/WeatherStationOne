@@ -1,9 +1,7 @@
 //  project
 #include <WeatherPacket.h>
-#include <HC12.h>
 
 #define TEMPERATURELOWPASS 0.1
-#define VOLTAGELOWPASS 0.5
 
 //  this is the object all data is collected to
 class WeatherReport {
@@ -56,26 +54,12 @@ class WeatherReport {
       strcpy(mPacket.mWindDirection, windDirection);
     }
 
-    void addVoltage(float voltage) {
-      if (mPacket.mBatteryVoltage==UNDEFINEDVALUE)
-        mPacket.mBatteryVoltage = voltage;
-      else
-        mPacket.mBatteryVoltage = mPacket.mBatteryVoltage*(1-VOLTAGELOWPASS)+voltage*VOLTAGELOWPASS; 
-    }
-
+    //  TODO(PR #4): transmission is temporarily disabled while HC-12 is removed;
+    //  MQTT publishing over WiFi replaces this in a follow-up PR.
     void send() {
-      if (DEBUG)
-        Serial.println("starting HC-12 communication...");
-
-      //  send paket data as binary
-      uint8_t *packetBinary = mPacket.encodedBytes();
-      int packetSize = mPacket.encodedSize();
-
       if (DEBUG) {
-        Serial.println("sending report...");
+        Serial.println("report ready (transmission not yet implemented):");
         mPacket.print(&Serial);
       }
-
-      HC12.write(packetBinary, packetSize);
     }
 };

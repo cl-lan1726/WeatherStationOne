@@ -9,7 +9,6 @@
 #ifndef _PACKET_H_
 #define _PACKET_H_
 
-#include <Bolbro.h>
 #include <WeatherConfig.h>
 
 #define UNDEFINEDVALUE  -1.0
@@ -86,8 +85,8 @@ class Packet {
       if (setCRC) {
     		*(crc16Addr()) = crc16();
     		if (DEBUG) {
-      		LOG->print("setting CRC to ");
-        	LOG->println(*(crc16Addr()));
+      		Serial.print("setting CRC to ");
+        	Serial.println(*(crc16Addr()));
         }
      	}
       return (uint8_t *) magicByteAddr();
@@ -99,14 +98,14 @@ class Packet {
 
     bool decodeByte(byte b) {
       if (DEBUG) {
-        LOG->print(b);
-        LOG->print(" ");
+        Serial.print(b);
+        Serial.print(" ");
       }
       encodedBytes(false)[mDecodePos] = b;
       if (mDecodePos==0&&b!=MAGICBYTE) {
         //  wait for the starting byte and skip otherwise
         if (DEBUG)
-          LOG->println("skipping because not magic number");
+          Serial.println("skipping because not magic number");
         return false;
       } else {
         mDecodePos++;
@@ -116,12 +115,12 @@ class Packet {
           if (*(crc16Addr())==crc16()) {
             //  valid packet decoded
             if (DEBUG)
-              LOG->println("decoded a valid packet");
+              Serial.println("decoded a valid packet");
             return true;
           } else {
             //  corrupted packet, reset
             if (DEBUG)
-              LOG->println("decoded to a corrupted packet, skipping...");
+              Serial.println("decoded to a corrupted packet, skipping...");
             return false;
           }
         } else
