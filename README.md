@@ -25,8 +25,10 @@ Legacy circuit diagrams for the sensor wiring are provided in `CircuitSensors.pd
 ## Software Installation
 
 - install support for your ESP32 developer board (ESP32-C6-DevkitM-1) in the Arduino IDE
+- install the **PubSubClient** library (by Nick O'Leary) via the Arduino Library Manager, used for MQTT
 - copy `libraries/Weather` to your Arduino library directory; on macOS, this is `~/Documents/Arduino/libraries`
 - restart Arduino IDE afterwards
+- edit `sketches/weatherstation/StationConfig.h` to set your WiFi credentials, MQTT broker address, and sensor calibration constants
 - compile and flash `sketches/weatherstation`
 
 ## TODO

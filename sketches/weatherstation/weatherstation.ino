@@ -9,6 +9,7 @@
 #include <Adafruit_BME280.h>
 
 //  project
+#include "StationConfig.h"
 #include "WeatherReport.h"
 
 /****************************************************************************************************
@@ -419,8 +420,9 @@ void loop() {
 
     digitalWrite(LED_PIN, LOW); //  turn LED off
 
-    //  start a fresh report accumulation window (also resets low-pass filtered values)
-    report = WeatherReport();
+    //  start a fresh report accumulation window (also resets low-pass filtered values);
+    //  keeps the WiFi/MQTT connection alive rather than reconnecting every interval
+    report.reset();
     startSampling = millis();
   }
 
