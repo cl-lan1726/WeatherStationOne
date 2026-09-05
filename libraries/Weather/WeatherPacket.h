@@ -5,8 +5,9 @@
 #ifndef _WEATHERPACKET_H_
 #define _WEATHERPACKET_H_
 
-#include <Bolbro.h>
 #include <Packet.h>
+
+#define STRINGNOTINITIALIZED "-"
 
 class WeatherPacket : public Packet {
 
@@ -31,9 +32,6 @@ class WeatherPacket : public Packet {
     //  anemometer
     float mWindSpeedMpS;
 
-    //  system voltage, usually the battery
-    float mBatteryVoltage;
-
   private:
 
     //  CRC16 checksum
@@ -50,40 +48,7 @@ class WeatherPacket : public Packet {
 
       mWindDirection[0] = '\0';
       mWindSpeedMpS = UNDEFINEDVALUE;
-
-      mBatteryVoltage = UNDEFINEDVALUE;
     }
-
-		float batteryPercentage() {
-			float cellVoltage = mBatteryVoltage/NUMCELLS;
-			float batteryPercentage = 0;
-			//	characteristics for a NCR18650BD Lithium-Ion cell
-#if 1
-//	parameters for LiIon cells connected to charger board
-#	define ZEROVOLTAGE	2.8f
-#	define MIDVOLTAGE 4.0f
-#	define FULLVOLTAGE 4.2f
-#else
-//	original parameters for LiIon cells
-#	define ZEROVOLTAGE	2.0f
-#	define MIDVOLTAGE 4.3f
-#	define FULLVOLTAGE 4.7f
-#endif
-			if (cellVoltage>ZEROVOLTAGE) {
-				float remainingCapacity;
-				if (cellVoltage<MIDVOLTAGE)
-					remainingCapacity = (cellVoltage-ZEROVOLTAGE)/(MIDVOLTAGE-ZEROVOLTAGE)*3000.0;
-				else
-					remainingCapacity = 3000.0+(cellVoltage-MIDVOLTAGE)/(FULLVOLTAGE-MIDVOLTAGE)*300.0;
-
-				batteryPercentage = 100*remainingCapacity/3200.0;
-			}
-
-			if (batteryPercentage>100.0f)
-				batteryPercentage = 100.0f;
-
-			return batteryPercentage;
-		}
 
     void print(Print *p) {
     	p->print("magic byte: ");
@@ -127,16 +92,6 @@ class WeatherPacket : public Packet {
 			}
 #endif
 
-#if USE_BATTERY
-			if (mBatteryVoltage!=UNDEFINEDVALUE) {
-				p->print("battery voltage: ");
-				p->print(mBatteryVoltage, 2);
-				p->print(" V, ");
-				p->print(batteryPercentage(), 0);
-				p->println("%");
-			}
-#endif // USE_BATTERY
-
 			p->print("checksum: ");
 			p->print(mCRC16);
 			p->println(mCRC16==crc16()?" correct":" wrong");
@@ -172,9 +127,7 @@ class WeatherPacket : public Packet {
       else
         json += linePrefix + "\t\"winddirection\" : \"" STRINGNOTINITIALIZED "\",\n";
 
-			json += linePrefix + jsonLine("windspeed", mWindSpeedMpS!=UNDEFINEDVALUE, mWindSpeedMpS, 1);
-			json += linePrefix + jsonLine("batteryvoltage", mBatteryVoltage!=UNDEFINEDVALUE, mBatteryVoltage, 2);
-			json += linePrefix + jsonLine("batterypercentage", mBatteryVoltage!=UNDEFINEDVALUE, batteryPercentage(), 0, false);
+			json += linePrefix + jsonLine("windspeed", mWindSpeedMpS!=UNDEFINEDVALUE, mWindSpeedMpS, 1, false);
 #else
       if (mDeltaRainMM!=UNDEFINEDVALUE)
         json += linePrefix + "\t\"raindelta\" : " + String(mDeltaRainMM, 1) +",\n";
@@ -202,17 +155,9 @@ class WeatherPacket : public Packet {
         json += linePrefix + "\t\"winddirection\" : \"" STRINGNOTINITIALIZED "\",\n";
 
       if (mWindSpeedMpS!=UNDEFINEDVALUE)
-        json += linePrefix + "\t\"windspeed\" : " + String(mWindSpeedMpS, 1) +",\n";
+        json += linePrefix + "\t\"windspeed\" : " + String(mWindSpeedMpS, 1) +"\n";
       else
-        json += linePrefix + "\t\"windspeed\" : \"" STRINGNOTINITIALIZED "\",\n";
-
-      if (mBatteryVoltage!=UNDEFINEDVALUE) {
-        json += linePrefix + "\t\"batteryvoltage\" : " + String(mBatteryVoltage, 2) +",\n";
-        json += linePrefix + "\t\"batterypercentage\" : " + String(batteryPercentage(), 0) +"\n";
-      } else {
-        json += linePrefix + "\t\"batteryvoltage\" : \"" STRINGNOTINITIALIZED "\",\n";
-        json += linePrefix + "\t\"batterypercentage\" : \"" STRINGNOTINITIALIZED "\"\n";
-      }
+        json += linePrefix + "\t\"windspeed\" : \"" STRINGNOTINITIALIZED "\"\n";
 #endif
 
       json += linePrefix + "}";
