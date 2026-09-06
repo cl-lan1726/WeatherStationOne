@@ -39,9 +39,29 @@ The AS5600's raw angle is relative to wherever its magnet happens to sit when mo
 
 1. Leave `WIND_DIRECTION_OFFSET_DEGREES` at `0.0f` in `StationConfig.h` and flash the station.
 2. Physically point the wind vane's reference mark at true north.
-3. Read the current `winddirection` value from a report - either the Serial monitor (with `DEBUG` enabled) or by subscribing to `MQTT_TOPIC_DATA`, e.g. `mosquitto_sub -h <broker> -t weatherstation/data`. Temporarily lowering `DEFAULT_SECONDS_BETWEEN_REPORTS` (e.g. to 5) makes this quicker. Call this reading `X`.
+3. Read the current wind direction reading in degrees from the Serial monitor (with `DEBUG` enabled) - the MQTT payload only carries the rounded 16-point compass label (see below), not a precise degree value, so it can't be used for this step. Temporarily lowering `DEFAULT_SECONDS_BETWEEN_REPORTS` (e.g. to 5) makes this quicker. Call this reading `X`.
 4. Set `WIND_DIRECTION_OFFSET_DEGREES` to `-X` (keep it within ±360; e.g. if `X` is 250, use `-250`) and reflash.
 5. Point the vane at north again and confirm the reported value is now close to `0`/`360`. Restore `DEFAULT_SECONDS_BETWEEN_REPORTS` to your normal value if you lowered it for step 3.
+
+## MQTT message example
+
+Each report is published as a single retained-free JSON message to `MQTT_TOPIC_DATA` (default
+`weatherstation/data`, see `StationConfig.h`). A sensor that hasn't produced a valid reading yet
+reports `"-"` instead of a number. `winddirection` is the nearest 16-point compass label (`N`,
+`NNE`, `NE`, ... `NNW`), not a raw degree value:
+
+```json
+{
+	"raindelta" : 0.0,
+	"temperature" : 21.3,
+	"humidity" : 62.5,
+	"pressure" : 1013.2,
+	"winddirection" : "SSW",
+	"windspeed" : 3.2
+}
+```
+
+Subscribe to see it live, e.g. `mosquitto_sub -h <broker> -t weatherstation/data`.
 
 ## TODO
 
