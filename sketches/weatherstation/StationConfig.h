@@ -57,6 +57,14 @@
 #define AS5600_PWM_PULSE_TIMEOUT_US 10000ul // covers PWM frequencies down to ~100 Hz
 
 /****************************************************************************************************
+  wind direction calibration: the AS5600's raw angle is relative to wherever its magnet happens
+  to sit, not to true north. See README.md "Wind direction calibration" for the procedure to
+  determine this value for your installation.
+ ****************************************************************************************************/
+
+#define WIND_DIRECTION_OFFSET_DEGREES 0.0f // customize: added to the raw reading so 0 = true north
+
+/****************************************************************************************************
   rain gauge calibration: 8 pulses = 25ml, one bucket = 3.125ml
  ****************************************************************************************************/
 

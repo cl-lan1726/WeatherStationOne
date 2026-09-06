@@ -87,8 +87,11 @@ static void propagateWindDirection(WeatherReport &report) {
 #endif // DEBUG
 
   int rawAngle;
-  if (readAS5600PwmAngle(WIND_VANE_PIN, &rawAngle))
-    report.setWindDirectionDegrees(rawAngle*360.0f/4096.0f);
+  if (readAS5600PwmAngle(WIND_VANE_PIN, &rawAngle)) {
+    //  apply the calibration offset and normalize into [0, 360)
+    float degrees = fmod(rawAngle*360.0f/4096.0f+WIND_DIRECTION_OFFSET_DEGREES+360.0f, 360.0f);
+    report.setWindDirectionDegrees(degrees);
+  }
 #if DEBUG
   else {
     static bool notFoundReported = false;
