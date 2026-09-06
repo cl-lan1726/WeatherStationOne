@@ -3,10 +3,11 @@
 #include <limits.h>
 #include <math.h>
 
-//  temperature sensor
+//  temperature/humidity/pressure sensor (LaskaKit outdoor meteo THP: SHT40 + BMP280)
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
-#include <Adafruit_BME280.h>
+#include <Adafruit_SHT4x.h>
+#include <Adafruit_BMP280.h>
 
 //  project
 #include "StationConfig.h"
@@ -45,8 +46,8 @@ static void startSerial() {
       continuously in the background and averaged once per report interval
     - the rain gauge uses a single reed contact, a pulse is notified by a GPIO interrupt, a counter
       is increased, and the result is sent once per report interval
-    - temperature, barometric pressure, humidity are measure using a Bosch BME280, its state is polled
-      once per report interval
+    - temperature/humidity and barometric pressure are measured using a LaskaKit outdoor meteo THP
+      board (Sensirion SHT40 + Bosch BMP280), polled once per report interval
     - OPEN: luminescence
     - OPEN: ground humidity (Bodenfeuchte)
 
@@ -162,38 +163,48 @@ static void propagateRain(WeatherReport &report) {
 
 #if USE_TEMPERATURE
 
-//  temperature/barometric/humidity sensor
+//  temperature/humidity/barometric pressure: LaskaKit outdoor meteo THP board
+//  (Sensirion SHT40 for temperature+humidity, Bosch BMP280 for pressure), both on the
+//  shared I2C bus (SDA_PIN/SCL_PIN)
+static Adafruit_SHT4x sht4;
+static Adafruit_BMP280 bmp;
+static bool temperatureSensorsInitialized = false;
+
 static void propagateTemperatureEtAll(WeatherReport &report) {
 
 #if DEBUG
   static bool reported = false;
   if (!reported) {
     startSerial();
-    Serial.println("retrieving BME280 data...");
+    Serial.println("retrieving SHT40/BMP280 data...");
     reported = true;
   }
 #endif
 
-  Adafruit_BME280 bme;
-  if (!bme.begin(0x76)) {
+  if (!temperatureSensorsInitialized) {
+    temperatureSensorsInitialized = sht4.begin(&Wire) && bmp.begin(0x76);
+    if (temperatureSensorsInitialized) {
+      sht4.setPrecision(SHT4X_HIGH_PRECISION);
+      sht4.setHeater(SHT4X_NO_HEATER);
+    }
 #if DEBUG
-    static bool notFoundReported = false;
-    if (!notFoundReported) {
+    else {
       startSerial();
       Serial.println("no temperature sensor found...");
-      notFoundReported = true;
     }
 #endif
-  } else {
+  }
+
+  if (temperatureSensorsInitialized) {
     int numRetries = 10;
 
     do {
-      float temperature = bme.readTemperature();
-      float pressure = bme.readPressure();
-      float humidity = bme.readHumidity();
+      sensors_event_t humidityEvent, temperatureEvent;
+      sht4.getEvent(&humidityEvent, &temperatureEvent);
+      float pressure = bmp.readPressure();
 
-      if (temperature!=NAN && pressure!=NAN && humidity!=NAN) {
-        report.addTemperature(temperature, pressure/100.0f, humidity);
+      if (!isnan(temperatureEvent.temperature) && !isnan(pressure) && !isnan(humidityEvent.relative_humidity)) {
+        report.addTemperature(temperatureEvent.temperature, pressure/100.0f, humidityEvent.relative_humidity);
         break;
       }
 
@@ -308,6 +319,10 @@ void setup() {
   pinMode(WIND_VANE_PIN, INPUT);
   pinMode(WINDSPEED_PIN, INPUT);
 #endif // USE_WIND_AS5600
+
+#if USE_TEMPERATURE
+  Wire.begin(SDA_PIN, SCL_PIN);
+#endif // USE_TEMPERATURE
 
 #if DEBUG
   Serial.println("finished setup, continuing to loop()");
