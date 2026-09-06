@@ -91,6 +91,22 @@ class WeatherPacket {
 			return buffer;
 		}
 
+		//  MQTT consumers want the 16-point compass label (as the pre-AS5600-PWM firmware sent),
+		//  not a raw degree number; the float stays internally for calibration precision (see
+		//  WIND_DIRECTION_OFFSET_DEGREES / README "Wind direction calibration")
+		const char *windDirectionToCompass(float degrees) {
+			static const char *directions[] = {
+				"N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+				"S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"
+			};
+
+			int index = ((int) (degrees/22.5f+0.5f))%16;
+			if (index<0)
+				index += 16;
+
+			return directions[index];
+		}
+
     String toJson(String linePrefix = "") {
 
       String json = linePrefix + "{\n";
@@ -99,7 +115,12 @@ class WeatherPacket {
 			json += linePrefix + jsonLine("temperature", mTemperatureDegreeCelsius!=UNDEFINEDVALUE, mTemperatureDegreeCelsius, 1);
 			json += linePrefix + jsonLine("humidity", mHumidityPercent!=UNDEFINEDVALUE, mHumidityPercent, 1);
 			json += linePrefix + jsonLine("pressure", mPressureHPA!=UNDEFINEDVALUE, mPressureHPA, 1);
-			json += linePrefix + jsonLine("winddirection", mWindDirectionDegrees!=UNDEFINEDVALUE, mWindDirectionDegrees, 1);
+
+			if (mWindDirectionDegrees!=UNDEFINEDVALUE)
+				json += linePrefix + "\t\"winddirection\" : \"" + String(windDirectionToCompass(mWindDirectionDegrees)) + "\",\n";
+			else
+				json += linePrefix + "\t\"winddirection\" : \"" STRINGNOTINITIALIZED "\",\n";
+
 			json += linePrefix + jsonLine("windspeed", mWindSpeedMpS!=UNDEFINEDVALUE, mWindSpeedMpS, 1, false);
 
       json += linePrefix + "}";
