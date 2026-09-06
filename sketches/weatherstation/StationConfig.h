@@ -36,15 +36,25 @@
   with a factor for loss of cup speed compared to wind (ANEMOMETER_LOSS)
  ****************************************************************************************************/
 
-#if USE_WIND_REED||USE_WIND_AS5600
+#if USE_WIND_AS5600
 #define ANEMOMETER_RADIUS 0.08 // 80mm = 0.08m, customize
 #define ANEMOMETER_LOSS 1.18 // customize
 #define DEFAULT_WINDSPEED_FACTOR (2*M_PI*ANEMOMETER_RADIUS*ANEMOMETER_LOSS)
 #else
 #define DEFAULT_WINDSPEED_FACTOR 2.7
-#endif // USE_WIND_REED||USE_WIND_AS5600
+#endif // USE_WIND_AS5600
 
 #define DEFAULT_MEASUREMENT_HEIGHT 10.0 // meters above ground, customize; 10.0 = no compensation
+
+/****************************************************************************************************
+  AS5600 PWM output calibration: the AS5600 encodes its 0..4095 angle as a PWM duty cycle
+  between a minimum and maximum percentage (see datasheet); customize against your own
+  measurements if readings seem off near the 0/360 degree wraparound point
+ ****************************************************************************************************/
+
+#define AS5600_PWM_MIN_DUTY_PERCENT 4.0f // customize
+#define AS5600_PWM_MAX_DUTY_PERCENT 97.5f // customize
+#define AS5600_PWM_PULSE_TIMEOUT_US 10000ul // covers PWM frequencies down to ~100 Hz
 
 /****************************************************************************************************
   rain gauge calibration: 8 pulses = 25ml, one bucket = 3.125ml

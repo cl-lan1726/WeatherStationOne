@@ -20,7 +20,9 @@ This README describes how to implement the electronics and software part of the 
 
 ## Electronics
 
-Legacy circuit diagrams for the sensor wiring are provided in `CircuitSensors.pdf` and `CircuitSensorsAS5600.pdf`; `plan.svg` documents the original combined system and is kept for historical reference. These predate the ESP32-C6/MQTT rework in this repository and are being updated incrementally as the firmware is rebuilt.
+Wind direction and wind speed are each read from their own AS5600 magnetic encoder via its PWM `OUT` pin (no I2C wiring needed for these two sensors). The rain gauge is a reed contact wired to a digital interrupt pin. See `sketches/weatherstation/StationConfig.h` and `libraries/Weather/WeatherConfig.h` for the exact pin assignments and calibration constants - the defaults there are proposed values and should be checked against your own wiring.
+
+Legacy circuit diagrams (`CircuitSensors.pdf`, `CircuitSensorsAS5600.pdf`, `plan.svg`) document the original HC-12/deep-sleep hardware and are kept for historical reference only; they predate the ESP32-C6/MQTT/AS5600-PWM rework in this repository.
 
 ## Software Installation
 
