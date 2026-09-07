@@ -30,7 +30,7 @@ Legacy circuit diagrams (`CircuitSensors.pdf`, `CircuitSensorsAS5600.pdf`, `plan
 - install these libraries via the Arduino Library Manager: **PubSubClient** (Nick O'Leary, MQTT), **Adafruit SHT4x Library**, **Adafruit BMP280 Library**, **Adafruit Unified Sensor**
 - copy `libraries/Weather` to your Arduino library directory; on macOS, this is `~/Documents/Arduino/libraries`
 - restart Arduino IDE afterwards
-- edit `sketches/weatherstation/StationConfig.h` to set your WiFi credentials, MQTT broker address, and sensor calibration constants
+- edit `sketches/weatherstation/StationConfig.h` to set your WiFi credentials, MQTT broker address, and sensor calibration constants; if your broker requires authentication, also set `MQTT_USERNAME`/`MQTT_PASSWORD` there (leave both empty for an anonymous broker)
 - compile and flash `sketches/weatherstation`
 
 ## Wind direction calibration

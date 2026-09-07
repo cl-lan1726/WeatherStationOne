@@ -22,6 +22,8 @@
 #define MQTT_BROKER_HOST "192.168.1.10" // customize
 #define MQTT_BROKER_PORT 1883
 #define MQTT_CLIENT_ID "weatherstation" // customize if you run more than one station
+#define MQTT_USERNAME "" // customize; leave empty for an unauthenticated/anonymous broker
+#define MQTT_PASSWORD "" // customize
 #define MQTT_TOPIC_DATA "weatherstation/data"
 
 /****************************************************************************************************
