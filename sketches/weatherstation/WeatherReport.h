@@ -40,7 +40,11 @@ class WeatherReport {
         if (DEBUG)
           Serial.println("connecting to MQTT broker...");
 
-        if (!mMqttClient.connect(MQTT_CLIENT_ID)) {
+        bool connected = (MQTT_USERNAME[0]!='\0')
+          ? mMqttClient.connect(MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD)
+          : mMqttClient.connect(MQTT_CLIENT_ID);
+
+        if (!connected) {
           if (DEBUG) {
             Serial.print("MQTT connect failed, rc=");
             Serial.print(mMqttClient.state());
